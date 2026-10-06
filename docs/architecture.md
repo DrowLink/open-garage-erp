@@ -12,7 +12,7 @@ HTTP client -> FastAPI routes/errors -> Pydantic validation
 ## Decisions
 
 - **Application factory:** settings and database URL are injected before tables are created. Tests therefore use a unique temporary SQLite file.
-- **Persistence:** SQLAlchemy 2 typed declarative models and short request-scoped sessions. SQLite `PRAGMA foreign_keys=ON` is installed for every engine connection. Alembic owns versioned schema changes; `uv run alembic upgrade head` applies the initial migration.
+- **Persistence:** SQLAlchemy 2 typed declarative models and short request-scoped sessions. Startup parses and validates the configured database URL before engine creation, rejecting malformed URLs and non-SQLite dialects. SQLite `PRAGMA foreign_keys=ON` is installed for every engine connection. Alembic owns versioned schema changes; `uv run alembic upgrade head` applies the initial migration.
 - **Money:** estimates are non-negative integers in cents, avoiding binary floating-point ambiguity.
 - **Time:** models store UTC timestamps; API serialization emits ISO 8601 with `Z`.
 - **Workflow:** repair order status is a closed API enum. Allowed edges are `draft -> approved|cancelled`, `approved -> in_progress|cancelled`, and `in_progress -> completed|cancelled`; terminal states have no outgoing edges.

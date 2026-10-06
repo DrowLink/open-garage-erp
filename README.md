@@ -17,7 +17,7 @@ uv run uvicorn open_garage_erp.main:app --reload
 
 Open <http://127.0.0.1:8000>, interactive docs at <http://127.0.0.1:8000/docs>, or `GET /health`.
 
-The default database is the local relative file `./data/open-garage.db`. Override it with `OPEN_GARAGE_DATABASE_URL`. Run `uv run alembic upgrade head` before starting the app; application startup never creates or changes tables. Tests migrate and inject an isolated database under pytest's temporary directory; they never use the application default.
+The default database is the local relative file `./data/open-garage.db`. Override it with `OPEN_GARAGE_DATABASE_URL`. Startup fails fast when the value is not a valid SQLAlchemy URL or does not select SQLite; the MVP accepts only file-backed SQLite storage without URI query options. Run `uv run alembic upgrade head` before starting the app; application startup never creates or changes tables. Tests migrate and inject an isolated database under pytest's temporary directory; they never use the application default.
 
 ## API examples
 

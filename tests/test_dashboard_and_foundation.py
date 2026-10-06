@@ -92,6 +92,11 @@ def test_settings_reject_unsupported_database_dialects():
         Settings(database_url="postgresql://localhost/garage")
 
 
+def test_settings_reject_malformed_database_urls():
+    with pytest.raises(ValueError, match="valid SQLAlchemy database URL"):
+        Settings(database_url="not-a-database-url")
+
+
 def test_settings_reject_empty_sqlite_database_path():
     with pytest.raises(ValueError, match="path"):
         Settings(database_url="sqlite:///")

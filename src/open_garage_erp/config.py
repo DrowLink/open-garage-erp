@@ -3,6 +3,7 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError
 
 
 class Settings(BaseSettings):
@@ -17,9 +18,12 @@ class Settings(BaseSettings):
     @field_validator("database_url")
     @classmethod
     def require_sqlite(cls, value: str) -> str:
-        if not value.startswith("sqlite:///"):
+        try:
+            parsed_url = make_url(value)
+        except ArgumentError as exc:
+            raise ValueError("Database URL must be a valid SQLAlchemy database URL") from exc
+        if parsed_url.get_backend_name() != "sqlite":
             raise ValueError("The MVP supports SQLite database URLs only")
-        parsed_url = make_url(value)
         database_path = parsed_url.database
         if database_path is None or not database_path.strip():
             raise ValueError("SQLite database URL must include a database path")

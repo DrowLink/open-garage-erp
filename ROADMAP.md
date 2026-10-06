@@ -16,7 +16,7 @@ Each checkbox is scoped for one autonomous daily run. Work top-to-bottom within 
 - [x] Add isolated temporary-database pytest fixtures.
 - [x] Pin Python dependencies and CI actions.
 - [x] Introduce Alembic and generate the initial schema migration.
-- [ ] Add a startup check that refuses malformed non-SQLite database URLs.
+- [x] Add a startup check that refuses malformed non-SQLite database URLs.
 - [ ] Add password hashing primitives with Argon2id (depends: auth user model design).
 - [ ] Add a shop-scoped user model and migration (depends: Alembic).
 - [ ] Add session-token login and logout endpoints (depends: user model, password hashing).
