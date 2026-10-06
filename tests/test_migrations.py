@@ -21,6 +21,42 @@ def test_initial_migration_creates_mvp_tables(tmp_path: Path) -> None:
     assert {"alembic_version", "customers", "vehicles", "repair_orders"} <= tables
 
 
+def test_user_migration_creates_shop_scoped_auth_schema(tmp_path: Path) -> None:
+    database_path = tmp_path / "users.db"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+
+    command.upgrade(config, "head")
+
+    inspector = inspect(create_engine(f"sqlite:///{database_path}"))
+    assert {"shops", "users"} <= set(inspector.get_table_names())
+    assert {column["name"] for column in inspector.get_columns("users")} == {
+        "id",
+        "shop_id",
+        "email",
+        "display_name",
+        "password_hash",
+        "is_active",
+        "created_at",
+        "updated_at",
+    }
+    assert inspector.get_foreign_keys("users") == [
+        {
+            "name": None,
+            "constrained_columns": ["shop_id"],
+            "referred_schema": None,
+            "referred_table": "shops",
+            "referred_columns": ["id"],
+            "options": {"ondelete": "RESTRICT"},
+        }
+    ]
+    user_unique_columns = {
+        tuple(constraint["column_names"])
+        for constraint in inspector.get_unique_constraints("users")
+    }
+    assert user_unique_columns == {("shop_id", "email")}
+
+
 def test_migration_round_trip_returns_to_empty_schema(tmp_path: Path) -> None:
     database_path = tmp_path / "round-trip.db"
     config = Config("alembic.ini")

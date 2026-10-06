@@ -18,7 +18,7 @@ Each checkbox is scoped for one autonomous daily run. Work top-to-bottom within 
 - [x] Introduce Alembic and generate the initial schema migration.
 - [x] Add a startup check that refuses malformed non-SQLite database URLs.
 - [ ] Add password hashing primitives with Argon2id (depends: auth user model design).
-- [ ] Add a shop-scoped user model and migration (depends: Alembic).
+- [x] Add a shop-scoped user model and migration (depends: Alembic).
 - [ ] Add session-token login and logout endpoints (depends: user model, password hashing).
 - [ ] Add role definitions for owner, service advisor, technician, and accountant (depends: user model).
 - [ ] Enforce role authorization on one protected test endpoint (depends: login, roles).

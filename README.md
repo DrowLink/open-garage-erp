@@ -2,7 +2,7 @@
 
 Open Garage ERP is an early, API-first ERP foundation for automotive repair shops. The MVP tracks customers, their vehicles, repair orders, estimates in integer cents, workflow status, and high-level dashboard counts.
 
-> **Status:** initial MVP with an Alembic-managed schema. Authentication, authorization, and production deployment hardening are roadmap work. Do not expose this version directly to the public internet.
+> **Status:** initial MVP with an Alembic-managed schema. The data model can store shop-scoped users, but password hashing, login, authorization, and production deployment hardening are still roadmap work. Do not expose this version directly to the public internet.
 
 ## Quickstart
 
@@ -64,4 +64,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the daily one-item workflow, [ROADMAP
 
 ## Scope and license
 
-This release deliberately keeps one deployable service and SQLite storage. It has no auth, invoicing, inventory, or UI beyond the landing page and generated OpenAPI UI. Licensed under the [MIT License](LICENSE).
+This release deliberately keeps one deployable service and SQLite storage. Shop and user records are schema-only: there are no user endpoints and authentication is not active. It has no invoicing, inventory, or UI beyond the landing page and generated OpenAPI UI. Licensed under the [MIT License](LICENSE).
