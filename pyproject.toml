@@ -8,6 +8,7 @@ license = { text = "MIT" }
 authors = [{ name = "Open Garage ERP Contributors" }]
 dependencies = [
   "alembic==1.16.5",
+  "argon2-cffi==25.1.0",
   "fastapi==0.142.2",
   "pydantic-settings==2.9.1",
   "sqlalchemy==2.0.41",
