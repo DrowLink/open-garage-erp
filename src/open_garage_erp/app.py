@@ -1,8 +1,9 @@
+from datetime import timedelta
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException, Path, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request, status
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -10,17 +11,25 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from open_garage_erp.config import Settings
 from open_garage_erp.database import build_session_factory, session_dependency
-from open_garage_erp.models import Customer, RepairOrder, Vehicle, utc_now
+from open_garage_erp.models import Customer, RepairOrder, SessionToken, User, Vehicle, utc_now
 from open_garage_erp.schemas import (
     MAX_SQLITE_INTEGER,
     CustomerCreate,
     CustomerResponse,
+    LoginRequest,
+    LoginResponse,
     RepairOrderCreate,
     RepairOrderResponse,
     RepairOrderStatus,
     RepairOrderStatusUpdate,
     VehicleCreate,
     VehicleResponse,
+)
+from open_garage_erp.security import (
+    DUMMY_PASSWORD_HASH,
+    generate_session_token,
+    hash_session_token,
+    verify_password,
 )
 
 VALID_STATUS_TRANSITIONS: dict[str, set[str]] = {
@@ -118,6 +127,60 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return """<!doctype html><html><head><title>Open Garage ERP</title></head>
         <body><main><h1>Open Garage ERP</h1><p>Automotive repair shop API.</p>
         <p><a href=\"/docs\">Interactive API documentation</a></p></main></body></html>"""
+
+    @app.post("/api/auth/login", response_model=LoginResponse, tags=["authentication"])
+    def login(payload: LoginRequest, session: SessionDep):
+        user = session.scalar(
+            select(User).where(User.shop_id == payload.shop_id, User.email == payload.email)
+        )
+        password_hash = (
+            user.password_hash if user is not None and user.is_active else DUMMY_PASSWORD_HASH
+        )
+        password_matches = verify_password(payload.password, password_hash)
+        if user is None or not user.is_active or not password_matches:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=error_body("invalid_credentials", "Invalid shop, email, or password"),
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        access_token = generate_session_token()
+        expires_at = utc_now() + timedelta(hours=12)
+        session.add(
+            SessionToken(
+                user_id=user.id,
+                token_hash=hash_session_token(access_token),
+                expires_at=expires_at,
+            )
+        )
+        session.commit()
+        return LoginResponse(access_token=access_token, expires_at=expires_at)
+
+    @app.post(
+        "/api/auth/logout",
+        status_code=status.HTTP_204_NO_CONTENT,
+        response_class=Response,
+        tags=["authentication"],
+    )
+    def logout(session: SessionDep, authorization: Annotated[str | None, Header()] = None):
+        scheme, _, token = (authorization or "").partition(" ")
+        stored_token = None
+        if scheme.casefold() == "bearer" and token:
+            stored_token = session.scalar(
+                select(SessionToken).where(
+                    SessionToken.token_hash == hash_session_token(token),
+                    SessionToken.revoked_at.is_(None),
+                    SessionToken.expires_at > utc_now(),
+                )
+            )
+        if stored_token is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=error_body("invalid_session", "Session token is invalid or expired"),
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        stored_token.revoked_at = utc_now()
+        session.commit()
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @app.post(
         "/api/customers",

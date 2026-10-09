@@ -2,7 +2,7 @@
 
 Open Garage ERP is an early, API-first ERP foundation for automotive repair shops. The MVP tracks customers, their vehicles, repair orders, estimates in integer cents, workflow status, and high-level dashboard counts.
 
-> **Status:** initial MVP with an Alembic-managed schema. The data model can store shop-scoped users and the application provides Argon2id password-hashing primitives, but account creation, login, authorization, and production deployment hardening are still roadmap work. Do not expose this version directly to the public internet.
+> **Status:** initial MVP with an Alembic-managed schema. The data model can store shop-scoped users and the API provides Argon2id password verification plus revocable login sessions. Account creation, role authorization, authentication rate limiting, and production deployment hardening are still roadmap work. Do not expose this version directly to the public internet.
 
 ## Quickstart
 
@@ -21,7 +21,19 @@ The default database is the local relative file `./data/open-garage.db`. Overrid
 
 ## API examples
 
+Users are provisioned directly in the database until account administration is implemented. Given an existing shop-scoped user, login returns a 12-hour opaque bearer token. Only its SHA-256 digest is stored; logout revokes the current token.
+
 ```bash
+# Login
+TOKEN=$(curl -sS -X POST http://127.0.0.1:8000/api/auth/login \
+  -H 'content-type: application/json' \
+  -d '{"shop_id":1,"email":"owner@example.com","password":"correct horse battery staple"}' \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+
+# Logout
+curl -sS -X POST http://127.0.0.1:8000/api/auth/logout \
+  -H "authorization: Bearer $TOKEN"
+
 # Customer
 curl -sS -X POST http://127.0.0.1:8000/api/customers \
   -H 'content-type: application/json' \
@@ -64,4 +76,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the daily one-item workflow, [ROADMAP
 
 ## Scope and license
 
-This release deliberately keeps one deployable service and SQLite storage. Shop and user records are schema-only: there are no user endpoints and authentication is not active. It has no invoicing, inventory, or UI beyond the landing page and generated OpenAPI UI. Licensed under the [MIT License](LICENSE).
+This release deliberately keeps one deployable service and SQLite storage. Login and logout manage session tokens, but resource endpoints are not role-protected yet and there is no user-administration API. It has no invoicing, inventory, or UI beyond the landing page and generated OpenAPI UI. Licensed under the [MIT License](LICENSE).

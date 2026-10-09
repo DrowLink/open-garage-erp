@@ -24,6 +24,23 @@ class TimestampedResponse(BaseModel):
         return aware.isoformat().replace("+00:00", "Z")
 
 
+class LoginRequest(BaseModel):
+    shop_id: int = Field(gt=0, le=MAX_SQLITE_INTEGER)
+    email: str = Field(min_length=1, max_length=320)
+    password: str = Field(min_length=1, max_length=1024)
+
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_at: datetime
+
+    @field_serializer("expires_at")
+    def serialize_expires_at(self, value: datetime) -> str:
+        aware = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+        return aware.isoformat().replace("+00:00", "Z")
+
+
 class CustomerResponse(TimestampedResponse):
     id: int
     name: str
