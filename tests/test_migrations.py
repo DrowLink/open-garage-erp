@@ -36,6 +36,7 @@ def test_user_migration_creates_shop_scoped_auth_schema(tmp_path: Path) -> None:
         "email",
         "display_name",
         "password_hash",
+        "role",
         "is_active",
         "created_at",
         "updated_at",
@@ -137,6 +138,87 @@ def test_initial_migration_adds_domain_check_constraints(tmp_path: Path) -> None
         "ck_repair_orders_estimate_nonnegative",
         "ck_repair_orders_status",
     }
+
+
+def test_database_rejects_unknown_user_roles(tmp_path: Path) -> None:
+    database_path = tmp_path / "role-constraints.db"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    command.upgrade(config, "head")
+    engine = create_engine(f"sqlite:///{database_path}")
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO shops (id, name, created_at, updated_at) "
+                "VALUES (1, 'Honest Auto', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO users "
+                "(shop_id, email, display_name, password_hash, role, is_active, "
+                "created_at, updated_at) VALUES "
+                "(1, 'user@example.com', 'User', 'hash', 'administrator', 1, "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+
+
+def test_role_migration_backfills_existing_users_without_leaving_a_default(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "role-backfill.db"
+    database_url = f"sqlite:///{database_path}"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url)
+    command.upgrade(config, "0003_session_tokens")
+    engine = create_engine(database_url)
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO shops (id, name, created_at, updated_at) "
+                "VALUES (1, 'Honest Auto', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+        connection.execute(
+            text(
+                "INSERT INTO users "
+                "(id, shop_id, email, display_name, password_hash, is_active, "
+                "created_at, updated_at) VALUES "
+                "(1, 1, 'existing@example.com', 'Existing', 'hash', 1, "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+
+    command.upgrade(config, "head")
+
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT role FROM users WHERE id = 1")) == "owner"
+    role_column = next(
+        column for column in inspect(engine).get_columns("users") if column["name"] == "role"
+    )
+    assert role_column["nullable"] is False
+    assert role_column["default"] is None
+    with pytest.raises(IntegrityError), engine.begin() as connection:
+        connection.execute(
+            text(
+                "INSERT INTO users "
+                "(shop_id, email, display_name, password_hash, is_active, "
+                "created_at, updated_at) VALUES "
+                "(1, 'omitted@example.com', 'Omitted', 'hash', 1, "
+                "CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
+            )
+        )
+
+    command.downgrade(config, "0003_session_tokens")
+
+    assert "role" not in {column["name"] for column in inspect(engine).get_columns("users")}
+    with engine.connect() as connection:
+        assert connection.scalar(text("SELECT email FROM users WHERE id = 1")) == (
+            "existing@example.com"
+        )
 
 
 def test_database_rejects_values_outside_domain_constraints(tmp_path: Path) -> None:

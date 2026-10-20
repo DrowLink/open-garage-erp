@@ -1,9 +1,11 @@
 from datetime import UTC, datetime
+from enum import StrEnum
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Enum,
     ForeignKey,
     Integer,
     String,
@@ -16,6 +18,13 @@ from open_garage_erp.database import Base
 
 def utc_now() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
+
+
+class UserRole(StrEnum):
+    OWNER = "owner"
+    SERVICE_ADVISOR = "service_advisor"
+    TECHNICIAN = "technician"
+    ACCOUNTANT = "accountant"
 
 
 class TimestampMixin:
@@ -32,13 +41,28 @@ class Shop(TimestampMixin, Base):
 
 class User(TimestampMixin, Base):
     __tablename__ = "users"
-    __table_args__ = (UniqueConstraint("shop_id", "email", name="uq_users_shop_email"),)
+    __table_args__ = (
+        CheckConstraint(
+            "role IN ('owner', 'service_advisor', 'technician', 'accountant')",
+            name="ck_users_role",
+        ),
+        UniqueConstraint("shop_id", "email", name="uq_users_shop_email"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     shop_id: Mapped[int] = mapped_column(ForeignKey("shops.id", ondelete="RESTRICT"))
     email: Mapped[str] = mapped_column(String(320))
     display_name: Mapped[str] = mapped_column(String(200))
     password_hash: Mapped[str] = mapped_column(String(255))
+    role: Mapped[UserRole] = mapped_column(
+        Enum(
+            UserRole,
+            values_callable=lambda roles: [role.value for role in roles],
+            native_enum=False,
+            create_constraint=False,
+            length=32,
+        )
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 

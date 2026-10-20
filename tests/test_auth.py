@@ -1,6 +1,25 @@
+import pytest
+from sqlalchemy.exc import IntegrityError
+
+from open_garage_erp import models
 from open_garage_erp.database import build_session_factory
 from open_garage_erp.models import Shop, User
 from open_garage_erp.security import DUMMY_PASSWORD_HASH, hash_password
+
+
+def test_user_roles_define_shop_responsibilities() -> None:
+    assert set(models.UserRole) == {
+        models.UserRole.OWNER,
+        models.UserRole.SERVICE_ADVISOR,
+        models.UserRole.TECHNICIAN,
+        models.UserRole.ACCOUNTANT,
+    }
+    assert {role.value for role in models.UserRole} == {
+        "owner",
+        "service_advisor",
+        "technician",
+        "accountant",
+    }
 
 
 def test_login_runs_password_verification_for_unknown_user(client, monkeypatch) -> None:
@@ -68,12 +87,44 @@ def create_user(client, *, password: str = "correct horse battery staple") -> Us
             email="owner@example.com",
             display_name="Owner",
             password_hash=hash_password(password),
+            role=models.UserRole.OWNER,
         )
         session.add(user)
         session.commit()
         session.refresh(user)
         session.expunge(user)
         return user
+
+
+def test_explicit_user_role_reloads_as_enum(client) -> None:
+    user = create_user(client)
+    session_factory = build_session_factory(client.app.state.database_url)
+
+    with session_factory() as session:
+        reloaded_user = session.get(User, user.id)
+
+        assert reloaded_user is not None
+        assert reloaded_user.role is models.UserRole.OWNER
+        assert type(reloaded_user.role) is models.UserRole
+
+
+def test_orm_user_creation_requires_explicit_role(client) -> None:
+    session_factory = build_session_factory(client.app.state.database_url)
+    with session_factory() as session:
+        shop = Shop(name="Honest Auto")
+        session.add(shop)
+        session.flush()
+        session.add(
+            User(
+                shop_id=shop.id,
+                email="unspecified@example.com",
+                display_name="Unspecified",
+                password_hash="hash",
+            )
+        )
+
+        with pytest.raises(IntegrityError):
+            session.commit()
 
 
 def test_login_with_valid_credentials_returns_bearer_session_token(client) -> None:

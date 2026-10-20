@@ -2,7 +2,7 @@
 
 Open Garage ERP is an early, API-first ERP foundation for automotive repair shops. The MVP tracks customers, their vehicles, repair orders, estimates in integer cents, workflow status, and high-level dashboard counts.
 
-> **Status:** initial MVP with an Alembic-managed schema. The data model can store shop-scoped users and the API provides Argon2id password verification plus revocable login sessions. Account creation, role authorization, authentication rate limiting, and production deployment hardening are still roadmap work. Do not expose this version directly to the public internet.
+> **Status:** initial MVP with an Alembic-managed schema. The data model can store shop-scoped users with owner, service advisor, technician, or accountant roles, and the API provides Argon2id password verification plus revocable login sessions. Account creation, role authorization, authentication rate limiting, and production deployment hardening are still roadmap work. Do not expose this version directly to the public internet.
 
 ## Quickstart
 
