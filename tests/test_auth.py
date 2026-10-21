@@ -146,6 +146,83 @@ def test_login_with_valid_credentials_returns_bearer_session_token(client) -> No
     assert body["expires_at"].endswith("Z")
 
 
+def test_owner_check_requires_bearer_credentials(client) -> None:
+    response = client.get("/api/auth/owner-check")
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+    assert response.json() == {
+        "error": {
+            "code": "invalid_session",
+            "message": "Session token is invalid or expired",
+            "details": None,
+        }
+    }
+
+
+def test_owner_check_rejects_unknown_bearer_token(client) -> None:
+    response = client.get(
+        "/api/auth/owner-check",
+        headers={"Authorization": "Bearer not-a-valid-session-token"},
+    )
+
+    assert response.status_code == 401
+    assert response.headers["www-authenticate"] == "Bearer"
+    assert response.json()["error"]["code"] == "invalid_session"
+
+
+def test_owner_check_allows_owner_session(client) -> None:
+    user = create_user(client)
+    login_response = client.post(
+        "/api/auth/login",
+        json={
+            "shop_id": user.shop_id,
+            "email": user.email,
+            "password": "correct horse battery staple",
+        },
+    )
+
+    response = client.get(
+        "/api/auth/owner-check",
+        headers={"Authorization": f"Bearer {login_response.json()['access_token']}"},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "authorized"}
+
+
+def test_owner_check_forbids_technician_session(client) -> None:
+    user = create_user(client)
+    session_factory = build_session_factory(client.app.state.database_url)
+    with session_factory() as session:
+        stored_user = session.get(User, user.id)
+        stored_user.role = models.UserRole.TECHNICIAN
+        session.commit()
+
+    login_response = client.post(
+        "/api/auth/login",
+        json={
+            "shop_id": user.shop_id,
+            "email": user.email,
+            "password": "correct horse battery staple",
+        },
+    )
+
+    response = client.get(
+        "/api/auth/owner-check",
+        headers={"Authorization": f"Bearer {login_response.json()['access_token']}"},
+    )
+
+    assert response.status_code == 403
+    assert response.json() == {
+        "error": {
+            "code": "insufficient_role",
+            "message": "Owner role required",
+            "details": None,
+        }
+    }
+
+
 def test_logout_rejects_unknown_bearer_token(client) -> None:
     response = client.post(
         "/api/auth/logout",

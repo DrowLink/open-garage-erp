@@ -11,7 +11,15 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from open_garage_erp.config import Settings
 from open_garage_erp.database import build_session_factory, session_dependency
-from open_garage_erp.models import Customer, RepairOrder, SessionToken, User, Vehicle, utc_now
+from open_garage_erp.models import (
+    Customer,
+    RepairOrder,
+    SessionToken,
+    User,
+    UserRole,
+    Vehicle,
+    utc_now,
+)
 from open_garage_erp.schemas import (
     MAX_SQLITE_INTEGER,
     CustomerCreate,
@@ -154,6 +162,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         session.commit()
         return LoginResponse(access_token=access_token, expires_at=expires_at)
+
+    @app.get("/api/auth/owner-check", tags=["authentication"])
+    def owner_check(
+        session: SessionDep, authorization: Annotated[str | None, Header()] = None
+    ) -> dict[str, str]:
+        scheme, _, token = (authorization or "").partition(" ")
+        user = None
+        if scheme.casefold() == "bearer" and token:
+            user = session.scalar(
+                select(User)
+                .join(SessionToken, SessionToken.user_id == User.id)
+                .where(
+                    SessionToken.token_hash == hash_session_token(token),
+                    SessionToken.revoked_at.is_(None),
+                    SessionToken.expires_at > utc_now(),
+                    User.is_active.is_(True),
+                )
+            )
+        if user is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=error_body("invalid_session", "Session token is invalid or expired"),
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if user.role is not UserRole.OWNER:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=error_body("insufficient_role", "Owner role required"),
+            )
+        return {"status": "authorized"}
 
     @app.post(
         "/api/auth/logout",

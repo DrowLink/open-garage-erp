@@ -2,7 +2,7 @@
 
 Open Garage ERP is an early, API-first ERP foundation for automotive repair shops. The MVP tracks customers, their vehicles, repair orders, estimates in integer cents, workflow status, and high-level dashboard counts.
 
-> **Status:** initial MVP with an Alembic-managed schema. The data model can store shop-scoped users with owner, service advisor, technician, or accountant roles, and the API provides Argon2id password verification plus revocable login sessions. Account creation, role authorization, authentication rate limiting, and production deployment hardening are still roadmap work. Do not expose this version directly to the public internet.
+> **Status:** initial MVP with an Alembic-managed schema. The data model can store shop-scoped users with owner, service advisor, technician, or accountant roles, and the API provides Argon2id password verification plus revocable login sessions. An owner-only authorization check demonstrates role enforcement; broader resource authorization, account creation, authentication rate limiting, and production deployment hardening are still roadmap work. Do not expose this version directly to the public internet.
 
 ## Quickstart
 
@@ -32,6 +32,10 @@ TOKEN=$(curl -sS -X POST http://127.0.0.1:8000/api/auth/login \
 
 # Logout
 curl -sS -X POST http://127.0.0.1:8000/api/auth/logout \
+  -H "authorization: Bearer ***"
+
+# Verify an owner session (other roles receive 403)
+curl -sS http://127.0.0.1:8000/api/auth/owner-check \
   -H "authorization: Bearer $TOKEN"
 
 # Customer
@@ -76,4 +80,4 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the daily one-item workflow, [ROADMAP
 
 ## Scope and license
 
-This release deliberately keeps one deployable service and SQLite storage. Login and logout manage session tokens, but resource endpoints are not role-protected yet and there is no user-administration API. It has no invoicing, inventory, or UI beyond the landing page and generated OpenAPI UI. Licensed under the [MIT License](LICENSE).
+This release deliberately keeps one deployable service and SQLite storage. Login and logout manage session tokens, and `/api/auth/owner-check` is an owner-only authorization example, but resource endpoints are not role-protected yet and there is no user-administration API. It has no invoicing, inventory, or UI beyond the landing page and generated OpenAPI UI. Licensed under the [MIT License](LICENSE).

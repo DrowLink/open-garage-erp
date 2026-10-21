@@ -21,7 +21,7 @@ Each checkbox is scoped for one autonomous daily run. Work top-to-bottom within 
 - [x] Add a shop-scoped user model and migration (depends: Alembic).
 - [x] Add session-token login and logout endpoints (depends: user model, password hashing).
 - [x] Add role definitions for owner, service advisor, technician, and accountant (depends: user model).
-- [ ] Enforce role authorization on one protected test endpoint (depends: login, roles).
+- [x] Enforce role authorization on one protected test endpoint (depends: login, roles).
 - [ ] Add configurable request-body size limits.
 - [ ] Add API rate limiting for authentication endpoints (depends: login).
 
