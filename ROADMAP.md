@@ -24,6 +24,8 @@ Each checkbox is scoped for one autonomous daily run. Work top-to-bottom within 
 - [x] Enforce role authorization on one protected test endpoint (depends: login, roles).
 - [ ] Add configurable request-body size limits.
 - [ ] Add API rate limiting for authentication endpoints (depends: login).
+- [ ] Reject unknown fields in API write payloads.
+- [ ] Add indexes for vehicle-customer and repair-order-vehicle lookups (depends: Alembic).
 
 ## Customers and vehicles
 
@@ -38,6 +40,7 @@ Each checkbox is scoped for one autonomous daily run. Work top-to-bottom within 
 - [ ] Normalize and validate VIN check digits.
 - [ ] Add vehicle update with immutable ownership audit event (depends: audit events).
 - [ ] Add vehicle odometer history entries.
+- [ ] Add vehicle list pagination with stable cursors.
 - [ ] Add customer vehicle-history endpoint (depends: vehicle pagination).
 
 ## Appointments and intake
@@ -57,6 +60,7 @@ Each checkbox is scoped for one autonomous daily run. Work top-to-bottom within 
 - [x] Store and validate estimates as non-negative integer cents.
 - [x] Define repair-order status enum and validated transition graph.
 - [x] Return conflict errors for forbidden status transitions.
+- [ ] Add repair-order list pagination with stable cursors.
 - [ ] Add estimate line items for labor, parts, fees, and discounts.
 - [ ] Calculate estimate subtotal and total from line items.
 - [ ] Add customer estimate approval token with expiration.
