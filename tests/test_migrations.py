@@ -8,6 +8,25 @@ from sqlalchemy.exc import IntegrityError
 
 from open_garage_erp.app import create_app
 from open_garage_erp.config import Settings
+from open_garage_erp.models import RepairOrder, Vehicle
+
+
+def test_vehicle_model_declares_customer_lookup_index() -> None:
+    indexes = {
+        index.name: tuple(column.name for column in index.columns)
+        for index in Vehicle.__table__.indexes
+    }
+
+    assert indexes["ix_vehicles_customer_id"] == ("customer_id",)
+
+
+def test_repair_order_model_declares_vehicle_lookup_index() -> None:
+    indexes = {
+        index.name: tuple(column.name for column in index.columns)
+        for index in RepairOrder.__table__.indexes
+    }
+
+    assert indexes["ix_repair_orders_vehicle_id"] == ("vehicle_id",)
 
 
 def test_initial_migration_creates_mvp_tables(tmp_path: Path) -> None:
@@ -119,6 +138,42 @@ def test_default_alembic_config_accepts_environment_database_url(
     command.upgrade(Config("alembic.ini"), "head")
 
     assert "customers" in inspect(create_engine(f"sqlite:///{database_path}")).get_table_names()
+
+
+def test_migrations_index_vehicle_customer_lookups(tmp_path: Path) -> None:
+    database_path = tmp_path / "vehicle-customer-index.db"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+
+    command.upgrade(config, "head")
+
+    indexes = inspect(create_engine(f"sqlite:///{database_path}")).get_indexes("vehicles")
+    assert indexes == [
+        {
+            "name": "ix_vehicles_customer_id",
+            "column_names": ["customer_id"],
+            "unique": 0,
+            "dialect_options": {},
+        }
+    ]
+
+
+def test_migrations_index_repair_order_vehicle_lookups(tmp_path: Path) -> None:
+    database_path = tmp_path / "repair-order-vehicle-index.db"
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+
+    command.upgrade(config, "head")
+
+    indexes = inspect(create_engine(f"sqlite:///{database_path}")).get_indexes("repair_orders")
+    assert indexes == [
+        {
+            "name": "ix_repair_orders_vehicle_id",
+            "column_names": ["vehicle_id"],
+            "unique": 0,
+            "dialect_options": {},
+        }
+    ]
 
 
 def test_initial_migration_adds_domain_check_constraints(tmp_path: Path) -> None:

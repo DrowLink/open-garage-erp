@@ -25,7 +25,7 @@ Each checkbox is scoped for one autonomous daily run. Work top-to-bottom within 
 - [x] Add configurable request-body size limits.
 - [x] Add API rate limiting for authentication endpoints (depends: login).
 - [x] Reject unknown fields in API write payloads.
-- [ ] Add indexes for vehicle-customer and repair-order-vehicle lookups (depends: Alembic).
+- [x] Add indexes for vehicle-customer and repair-order-vehicle lookups (depends: Alembic).
 
 ## Customers and vehicles
 

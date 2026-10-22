@@ -25,8 +25,8 @@ HTTP client -> FastAPI routes/errors -> Pydantic validation
 - Shop 1—N User (`users.shop_id`, restricted deletion; unique `shop_id + email`)
 - User 1—N SessionToken (`session_tokens.user_id`, cascading deletion; unique token digest)
 - LoginAttempt stores failure and lockout state keyed by `shop_id + email`
-- Customer 1—N Vehicle (`vehicles.customer_id`, restricted deletion)
-- Vehicle 1—N RepairOrder (`repair_orders.vehicle_id`, restricted deletion)
+- Customer 1—N Vehicle (`vehicles.customer_id`, restricted deletion and indexed lookup)
+- Vehicle 1—N RepairOrder (`repair_orders.vehicle_id`, restricted deletion and indexed lookup)
 
 Tables carry integer primary keys plus `created_at` and `updated_at`. VIN is optional and unique when provided. Repair order description and estimate are a frozen snapshot for this MVP.
 

@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Index,
     Integer,
     String,
     UniqueConstraint,
@@ -98,6 +99,7 @@ class Vehicle(TimestampMixin, Base):
     __tablename__ = "vehicles"
     __table_args__ = (
         CheckConstraint("year >= 1886 AND year <= 2200", name="ck_vehicles_year_range"),
+        Index("ix_vehicles_customer_id", "customer_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -117,6 +119,7 @@ class RepairOrder(TimestampMixin, Base):
             "status IN ('draft', 'approved', 'in_progress', 'completed', 'cancelled')",
             name="ck_repair_orders_status",
         ),
+        Index("ix_repair_orders_vehicle_id", "vehicle_id"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
