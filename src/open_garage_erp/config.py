@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     database_url: str = Field(default="sqlite:///./data/open-garage.db")
     app_name: str = "Open Garage ERP"
     debug: bool = False
+    max_request_body_bytes: int = Field(default=1_048_576, gt=0)
 
     @field_validator("database_url")
     @classmethod

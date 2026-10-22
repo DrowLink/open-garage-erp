@@ -8,6 +8,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from open_garage_erp.config import Settings
 from open_garage_erp.database import build_session_factory, session_dependency
@@ -47,6 +48,90 @@ VALID_STATUS_TRANSITIONS: dict[str, set[str]] = {
     "completed": set(),
     "cancelled": set(),
 }
+
+
+class RequestBodyLimitMiddleware:
+    def __init__(self, app: ASGIApp, max_body_bytes: int) -> None:
+        self.app = app
+        self.max_body_bytes = max_body_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = scope["headers"]
+        content_lengths = [value for name, value in headers if name.lower() == b"content-length"]
+        declared_size = self._parse_content_length(content_lengths)
+        if declared_size is None or declared_size > self.max_body_bytes:
+            await self._reject(scope, receive, send)
+            return
+
+        body = bytearray()
+        terminal_message: Message | None = None
+        while terminal_message is None:
+            message = await receive()
+            if message["type"] != "http.request":
+                terminal_message = message
+                continue
+
+            chunk = message.get("body", b"")
+            if len(chunk) > self.max_body_bytes - len(body):
+                await self._reject(scope, receive, send)
+                return
+            body.extend(chunk)
+            if not message.get("more_body", False):
+                terminal_message = message
+
+        replay_messages: list[Message] = []
+        if terminal_message["type"] == "http.request":
+            replay_messages.append(
+                {"type": "http.request", "body": bytes(body), "more_body": False}
+            )
+        else:
+            if body:
+                replay_messages.append(
+                    {"type": "http.request", "body": bytes(body), "more_body": True}
+                )
+            replay_messages.append(terminal_message)
+
+        async def buffered_receive() -> Message:
+            if replay_messages:
+                return replay_messages.pop(0)
+            return await receive()
+
+        await self.app(scope, buffered_receive, send)
+
+    @staticmethod
+    def _parse_content_length(header_values: list[bytes]) -> int | None:
+        if not header_values:
+            return 0
+
+        parsed_values: list[int] = []
+        try:
+            for header_value in header_values:
+                for value in header_value.split(b","):
+                    value = value.strip(b" \t")
+                    if not value or not value.isdigit():
+                        return None
+                    parsed_values.append(int(value))
+        except ValueError:
+            return None
+
+        if any(value != parsed_values[0] for value in parsed_values[1:]):
+            return None
+        return parsed_values[0]
+
+    async def _reject(self, scope: Scope, receive: Receive, send: Send) -> None:
+        response = JSONResponse(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            content=error_body(
+                "request_too_large",
+                f"Request body exceeds the configured limit of {self.max_body_bytes} bytes",
+                {"max_bytes": self.max_body_bytes},
+            ),
+        )
+        await response(scope, receive, send)
 
 
 class RepairOrderNotFound(Exception):
@@ -97,6 +182,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     SessionDep = Annotated[Session, Depends(get_session)]
     EntityId = Annotated[int, Path(gt=0, le=MAX_SQLITE_INTEGER)]
     app = FastAPI(title=settings.app_name, debug=settings.debug)
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_body_bytes=settings.max_request_body_bytes,
+    )
     app.state.database_url = settings.database_url
 
     @app.exception_handler(RequestValidationError)

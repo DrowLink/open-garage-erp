@@ -1,8 +1,11 @@
+import asyncio
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy import text
 
+from open_garage_erp.app import RequestBodyLimitMiddleware, create_app
 from open_garage_erp.config import Settings
 from open_garage_erp.database import build_session_factory
 
@@ -158,3 +161,187 @@ def test_ids_over_sqlite_integer_limit_are_validation_errors(client):
 
     assert response.status_code == 422
     assert response.json()["error"]["code"] == "validation_error"
+
+
+def test_request_body_larger_than_configured_limit_is_rejected(tmp_path: Path):
+    app = create_app(
+        Settings(
+            database_url=f"sqlite:///{tmp_path / 'body-limit.db'}",
+            max_request_body_bytes=32,
+        )
+    )
+
+    with TestClient(app) as limited_client:
+        response = limited_client.post(
+            "/api/customers",
+            content=b"x" * 33,
+            headers={"content-type": "application/json"},
+        )
+
+    assert response.status_code == 413
+    assert response.json() == {
+        "error": {
+            "code": "request_too_large",
+            "message": "Request body exceeds the configured limit of 32 bytes",
+            "details": {"max_bytes": 32},
+        }
+    }
+
+
+def test_over_limit_chunked_body_is_rejected_before_body_ignoring_endpoint_runs(
+    tmp_path: Path,
+):
+    app = create_app(
+        Settings(
+            database_url=f"sqlite:///{tmp_path / 'chunked-body-limit.db'}",
+            max_request_body_bytes=32,
+        )
+    )
+
+    with TestClient(app) as limited_client:
+        response = limited_client.request(
+            "GET",
+            "/health",
+            content=(chunk for chunk in (b"x" * 16, b"x" * 17)),
+        )
+
+    assert "content-length" not in response.request.headers
+    assert response.request.headers["transfer-encoding"] == "chunked"
+    assert response.status_code == 413
+    assert response.json()["error"]["code"] == "request_too_large"
+
+
+def test_chunked_body_within_limit_is_accepted():
+    response_messages = []
+    request_messages = iter(
+        [
+            {"type": "http.request", "body": b"ab", "more_body": True},
+            {"type": "http.request", "body": b"cd", "more_body": False},
+        ]
+    )
+
+    async def body_reading_app(scope, receive, send):
+        body = bytearray()
+        more_body = True
+        while more_body:
+            message = await receive()
+            body.extend(message["body"])
+            more_body = message.get("more_body", False)
+        assert body == b"abcd"
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    async def receive():
+        return next(request_messages)
+
+    async def capture_send(message):
+        response_messages.append(message)
+
+    middleware = RequestBodyLimitMiddleware(body_reading_app, max_body_bytes=4)
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "headers": [(b"transfer-encoding", b"chunked")],
+    }
+
+    asyncio.run(middleware(scope, receive, capture_send))
+
+    assert response_messages[0]["status"] == 200
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        [(b"content-length", b"invalid")],
+        [(b"content-length", b"-1")],
+        [(b"content-length", b"1"), (b"content-length", b"2")],
+        [(b"content-length", b"1, 2")],
+    ],
+)
+def test_invalid_content_length_is_rejected_without_reading_body(headers):
+    receive_called = False
+    response_messages = []
+
+    async def app(scope, receive, send):
+        raise AssertionError("invalid framing must not reach the application")
+
+    async def unreadable_receive():
+        nonlocal receive_called
+        receive_called = True
+        raise AssertionError("invalidly framed request body must not be read")
+
+    async def capture_send(message):
+        response_messages.append(message)
+
+    middleware = RequestBodyLimitMiddleware(app, max_body_bytes=32)
+    scope = {"type": "http", "method": "POST", "headers": headers}
+
+    asyncio.run(middleware(scope, unreadable_receive, capture_send))
+
+    assert receive_called is False
+    assert response_messages[0]["status"] == 413
+
+
+def test_post_body_without_content_length_within_limit_is_accepted():
+    response_messages = []
+    request_messages = iter(
+        [{"type": "http.request", "body": b"abcd", "more_body": False}]
+    )
+
+    async def body_reading_app(scope, receive, send):
+        assert (await receive())["body"] == b"abcd"
+        await send({"type": "http.response.start", "status": 204, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    async def receive():
+        return next(request_messages)
+
+    async def capture_send(message):
+        response_messages.append(message)
+
+    middleware = RequestBodyLimitMiddleware(body_reading_app, max_body_bytes=4)
+    scope = {"type": "http", "method": "POST", "headers": []}
+
+    asyncio.run(middleware(scope, receive, capture_send))
+
+    assert response_messages[0]["status"] == 204
+
+
+def test_over_limit_body_cannot_start_downstream_response_or_side_effect():
+    response_messages = []
+    side_effects = []
+    request_messages = iter(
+        [
+            {"type": "http.request", "body": b"ab", "more_body": True},
+            {"type": "http.request", "body": b"cd", "more_body": False},
+        ]
+    )
+
+    async def response_starting_app(scope, receive, send):
+        side_effects.append("application ran")
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await receive()
+        await receive()
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    async def receive():
+        return next(request_messages)
+
+    async def capture_send(message):
+        response_messages.append(message)
+
+    middleware = RequestBodyLimitMiddleware(response_starting_app, max_body_bytes=3)
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "headers": [(b"content-length", b"3")],
+    }
+
+    asyncio.run(middleware(scope, receive, capture_send))
+
+    assert side_effects == []
+    response_starts = [
+        message for message in response_messages if message["type"] == "http.response.start"
+    ]
+    assert len(response_starts) == 1
+    assert response_starts[0]["status"] == 413
