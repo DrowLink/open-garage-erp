@@ -15,7 +15,7 @@ HTTP client -> FastAPI routes/errors -> Pydantic validation
 - **Persistence:** SQLAlchemy 2 typed declarative models and short request-scoped sessions. Startup parses and validates the configured database URL before engine creation, rejecting malformed URLs and non-SQLite dialects. SQLite `PRAGMA foreign_keys=ON` is installed for every engine connection. Alembic owns versioned schema changes; `uv run alembic upgrade head` applies the initial migration.
 - **Money:** estimates are non-negative integers in cents, avoiding binary floating-point ambiguity.
 - **Time:** models store UTC timestamps; API serialization emits ISO 8601 with `Z`.
-- **Identity boundary:** each user belongs to exactly one shop through a restricted foreign key. Email identity is unique within a shop, not globally. Passwords are hashed and verified through `open_garage_erp.security` using Argon2id; plaintext passwords are never stored. Login issues a cryptographically random 12-hour bearer token and persists only its SHA-256 digest. Logout marks that session revoked. Account creation, password policy, authentication rate limiting, and authorization remain separate roadmap work.
+- **Identity boundary:** each user belongs to exactly one shop through a restricted foreign key. Email identity is unique within a shop, not globally. Passwords are hashed and verified through `open_garage_erp.security` using Argon2id; plaintext passwords are never stored. Login issues a cryptographically random 12-hour bearer token and persists only its SHA-256 digest. Logout marks that session revoked. Database-backed counters atomically limit each shop/email pair after five failures for 15 minutes, including unknown accounts. Tracking is capped at 10,000 identities and authentication fails closed if rate-limit persistence is unavailable or full. Account creation, password policy, and broader authorization remain separate roadmap work.
 - **Workflow:** repair order status is a closed API enum. Allowed edges are `draft -> approved|cancelled`, `approved -> in_progress|cancelled`, and `in_progress -> completed|cancelled`; terminal states have no outgoing edges.
 - **Errors:** API errors use `{ "error": { "code", "message", "details" } }`, including validation and unknown routes.
 - **Boundaries:** customer, vehicle, and repair-order behavior is currently routed in the composition module to keep the MVP legible. Split domain routers/services when update operations or migrations make that separation valuable.
@@ -24,6 +24,7 @@ HTTP client -> FastAPI routes/errors -> Pydantic validation
 
 - Shop 1—N User (`users.shop_id`, restricted deletion; unique `shop_id + email`)
 - User 1—N SessionToken (`session_tokens.user_id`, cascading deletion; unique token digest)
+- LoginAttempt stores failure and lockout state keyed by `shop_id + email`
 - Customer 1—N Vehicle (`vehicles.customer_id`, restricted deletion)
 - Vehicle 1—N RepairOrder (`repair_orders.vehicle_id`, restricted deletion)
 
@@ -31,4 +32,4 @@ Tables carry integer primary keys plus `created_at` and `updated_at`. VIN is opt
 
 ## Known gaps
 
-There is no role authorization, account-creation flow, concurrency control, audit event stream, pagination, or production database adapter yet. Session authentication currently supports only login and logout; resource endpoints do not consume bearer tokens. The dashboard performs aggregate queries directly. These are explicit roadmap items rather than hidden claims.
+There is no account-creation flow, resource-wide role authorization, concurrency control for business records, audit event stream, pagination, or production database adapter yet. Session authentication supports login, logout, one owner-only authorization example, and login rate limiting; business resource endpoints do not consume bearer tokens. The dashboard performs aggregate queries directly. These are explicit roadmap items rather than hidden claims.

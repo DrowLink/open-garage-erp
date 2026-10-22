@@ -2,7 +2,7 @@
 
 Open Garage ERP is an early, API-first ERP foundation for automotive repair shops. The MVP tracks customers, their vehicles, repair orders, estimates in integer cents, workflow status, and high-level dashboard counts.
 
-> **Status:** initial MVP with an Alembic-managed schema. The data model can store shop-scoped users with owner, service advisor, technician, or accountant roles, and the API provides Argon2id password verification plus revocable login sessions. An owner-only authorization check demonstrates role enforcement; broader resource authorization, account creation, authentication rate limiting, and production deployment hardening are still roadmap work. Do not expose this version directly to the public internet.
+> **Status:** initial MVP with an Alembic-managed schema. The data model can store shop-scoped users with owner, service advisor, technician, or accountant roles, and the API provides Argon2id password verification plus revocable login sessions. Login failures are limited per shop and email; an owner-only authorization check demonstrates role enforcement. Broader resource authorization, account creation, and production deployment hardening are still roadmap work. Do not expose this version directly to the public internet.
 
 ## Quickstart
 
@@ -21,7 +21,7 @@ The default database is the local relative file `./data/open-garage.db`. Overrid
 
 ## API examples
 
-Users are provisioned directly in the database until account administration is implemented. Given an existing shop-scoped user, login returns a 12-hour opaque bearer token. Only its SHA-256 digest is stored; logout revokes the current token.
+Users are provisioned directly in the database until account administration is implemented. Given an existing shop-scoped user, login returns a 12-hour opaque bearer token. Only its SHA-256 digest is stored; logout revokes the current token. Five failed logins for the same shop and email trigger a 15-minute lockout, including attempts for unknown accounts. A limited response uses HTTP `429` with `Retry-After`.
 
 ```bash
 # Login

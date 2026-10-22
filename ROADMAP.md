@@ -23,7 +23,7 @@ Each checkbox is scoped for one autonomous daily run. Work top-to-bottom within 
 - [x] Add role definitions for owner, service advisor, technician, and accountant (depends: user model).
 - [x] Enforce role authorization on one protected test endpoint (depends: login, roles).
 - [x] Add configurable request-body size limits.
-- [ ] Add API rate limiting for authentication endpoints (depends: login).
+- [x] Add API rate limiting for authentication endpoints (depends: login).
 - [ ] Reject unknown fields in API write payloads.
 - [ ] Add indexes for vehicle-customer and repair-order-vehicle lookups (depends: Alembic).
 

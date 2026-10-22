@@ -1,9 +1,14 @@
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+from threading import Barrier, Event
+
 import pytest
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
+from sqlalchemy.orm import Session
 
 from open_garage_erp import models
 from open_garage_erp.database import build_session_factory
-from open_garage_erp.models import Shop, User
+from open_garage_erp.models import LoginAttempt, SessionToken, Shop, User, utc_now
 from open_garage_erp.security import DUMMY_PASSWORD_HASH, hash_password
 
 
@@ -257,3 +262,302 @@ def test_logout_revokes_the_current_session_token(client) -> None:
     assert response.status_code == 204
     assert response.content == b""
     assert client.post("/api/auth/logout", headers=authorization).status_code == 401
+
+
+def test_login_rate_limits_repeated_failures(client) -> None:
+    user = create_user(client)
+    credentials = {
+        "shop_id": user.shop_id,
+        "email": user.email,
+        "password": "wrong password",
+    }
+
+    for _ in range(5):
+        assert client.post("/api/auth/login", json=credentials).status_code == 401
+
+    response = client.post("/api/auth/login", json=credentials)
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "900"
+    assert response.json()["error"]["code"] == "login_rate_limited"
+
+
+def test_locked_identity_is_rejected_without_password_verification(client, monkeypatch) -> None:
+    user = create_user(client)
+    session_factory = build_session_factory(client.app.state.database_url)
+    with session_factory() as session:
+        session.add(
+            LoginAttempt(
+                shop_id=user.shop_id,
+                email=user.email,
+                failed_attempts=5,
+                locked_until=utc_now() + timedelta(minutes=15),
+            )
+        )
+        session.commit()
+
+    def unexpected_verification(_password: str, _password_hash: str) -> bool:
+        pytest.fail("locked identities must not run password verification")
+        return False
+
+    monkeypatch.setattr("open_garage_erp.app.verify_password", unexpected_verification)
+    response = client.post(
+        "/api/auth/login",
+        json={"shop_id": user.shop_id, "email": user.email, "password": "guess"},
+    )
+
+    assert response.status_code == 429
+    assert response.json()["error"]["code"] == "login_rate_limited"
+
+
+def test_login_rate_limits_repeated_failures_for_unknown_accounts(client) -> None:
+    credentials = {
+        "shop_id": 999,
+        "email": "unknown@example.com",
+        "password": "wrong password",
+    }
+
+    for _ in range(5):
+        assert client.post("/api/auth/login", json=credentials).status_code == 401
+
+    response = client.post("/api/auth/login", json=credentials)
+
+    assert response.status_code == 429
+    assert response.headers["retry-after"] == "900"
+    assert response.json()["error"]["code"] == "login_rate_limited"
+
+
+def test_login_attempt_storage_is_capped_for_arbitrary_unknown_identities(
+    client, monkeypatch
+) -> None:
+    monkeypatch.setattr("open_garage_erp.app.MAX_LOGIN_ATTEMPT_ROWS", 2)
+
+    statuses = []
+    for identity in range(3):
+        response = client.post(
+            "/api/auth/login",
+            json={
+                "shop_id": 999,
+                "email": f"unknown-{identity}@example.com",
+                "password": "wrong password",
+            },
+        )
+        statuses.append(response.status_code)
+
+    assert statuses == [401, 401, 503]
+    session_factory = build_session_factory(client.app.state.database_url)
+    with session_factory() as session:
+        assert session.query(LoginAttempt).count() == 2
+
+
+def test_login_attempt_cap_does_not_evict_an_active_lock(client, monkeypatch) -> None:
+    monkeypatch.setattr("open_garage_erp.app.MAX_LOGIN_ATTEMPT_ROWS", 1)
+    session_factory = build_session_factory(client.app.state.database_url)
+    locked_until = utc_now() + timedelta(minutes=15)
+    with session_factory() as session:
+        session.add(
+            LoginAttempt(
+                shop_id=1,
+                email="locked@example.com",
+                failed_attempts=5,
+                locked_until=locked_until,
+            )
+        )
+        session.commit()
+
+    response = client.post(
+        "/api/auth/login",
+        json={"shop_id": 999, "email": "unknown@example.com", "password": "guess"},
+    )
+
+    assert response.status_code == 503
+    with session_factory() as session:
+        attempt = session.get(LoginAttempt, (1, "locked@example.com"))
+        assert attempt is not None
+        assert attempt.locked_until == locked_until
+
+
+def test_login_attempt_cap_rechecks_capacity_when_stale_identity_is_reinserted(
+    client, monkeypatch
+) -> None:
+    monkeypatch.setattr("open_garage_erp.app.MAX_LOGIN_ATTEMPT_ROWS", 1)
+    session_factory = build_session_factory(client.app.state.database_url)
+    stale_identity = (999, "stale@example.com")
+    with session_factory() as session:
+        session.add(
+            LoginAttempt(
+                shop_id=stale_identity[0],
+                email=stale_identity[1],
+                failed_attempts=1,
+                locked_until=None,
+            )
+        )
+        session.commit()
+
+    verification_started = Event()
+    capacity_reused = Event()
+
+    def wait_while_capacity_is_reused(_password: str, _password_hash: str) -> bool:
+        verification_started.set()
+        assert capacity_reused.wait(timeout=5)
+        return False
+
+    monkeypatch.setattr("open_garage_erp.app.verify_password", wait_while_capacity_is_reused)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        response_future = executor.submit(
+            client.post,
+            "/api/auth/login",
+            json={
+                "shop_id": stale_identity[0],
+                "email": stale_identity[1],
+                "password": "wrong",
+            },
+        )
+        assert verification_started.wait(timeout=5)
+        with session_factory() as session:
+            stale_attempt = session.get(LoginAttempt, stale_identity)
+            assert stale_attempt is not None
+            session.delete(stale_attempt)
+            session.add(
+                LoginAttempt(
+                    shop_id=999,
+                    email="replacement@example.com",
+                    failed_attempts=1,
+                    locked_until=None,
+                )
+            )
+            session.commit()
+        capacity_reused.set()
+        response = response_future.result(timeout=5)
+
+    assert response.status_code == 503
+    with session_factory() as session:
+        assert session.query(LoginAttempt).count() == 1
+        assert session.get(LoginAttempt, (999, "replacement@example.com")) is not None
+
+
+def test_login_fails_closed_when_rate_limit_lookup_has_database_error(
+    client, monkeypatch
+) -> None:
+    original_get = Session.get
+
+    def fail_login_attempt_lookup(self, entity, ident, **kwargs):
+        if entity is LoginAttempt:
+            raise OperationalError("SELECT login_attempts", {}, Exception("database offline"))
+        return original_get(self, entity, ident, **kwargs)
+
+    monkeypatch.setattr(Session, "get", fail_login_attempt_lookup)
+    response = client.post(
+        "/api/auth/login",
+        json={"shop_id": 999, "email": "unknown@example.com", "password": "guess"},
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "error": {
+            "code": "authentication_unavailable",
+            "message": "Authentication service is temporarily unavailable",
+            "details": None,
+        }
+    }
+
+
+def test_login_fails_closed_when_rate_limit_update_has_database_error(
+    client, monkeypatch
+) -> None:
+    original_execute = Session.execute
+
+    def fail_login_attempt_update(self, statement, *args, **kwargs):
+        if statement.__class__.__name__ == "Insert":
+            raise OperationalError("INSERT login_attempts", {}, Exception("database offline"))
+        return original_execute(self, statement, *args, **kwargs)
+
+    monkeypatch.setattr(Session, "execute", fail_login_attempt_update)
+    response = client.post(
+        "/api/auth/login",
+        json={"shop_id": 999, "email": "unknown@example.com", "password": "guess"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["error"]["code"] == "authentication_unavailable"
+
+
+def test_concurrent_login_failures_are_counted_atomically(client, monkeypatch) -> None:
+    user = create_user(client)
+    credentials = {
+        "shop_id": user.shop_id,
+        "email": user.email,
+        "password": "wrong password",
+    }
+    verification_barrier = Barrier(2)
+
+    def fail_together(_password: str, _password_hash: str) -> bool:
+        verification_barrier.wait()
+        return False
+
+    monkeypatch.setattr("open_garage_erp.app.verify_password", fail_together)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(
+            executor.map(lambda _: client.post("/api/auth/login", json=credentials), range(2))
+        )
+
+    assert [response.status_code for response in responses] == [401, 401]
+    session_factory = build_session_factory(client.app.state.database_url)
+    with session_factory() as session:
+        assert session.query(LoginAttempt).one().failed_attempts == 2
+
+
+def test_concurrent_threshold_failure_prevents_success_from_clearing_lock(
+    client, monkeypatch
+) -> None:
+    password = "correct horse battery staple"
+    user = create_user(client, password=password)
+    session_factory = build_session_factory(client.app.state.database_url)
+    with session_factory() as session:
+        session.add(
+            LoginAttempt(
+                shop_id=user.shop_id,
+                email=user.email,
+                failed_attempts=4,
+                locked_until=None,
+            )
+        )
+        session.commit()
+
+    success_verifying = Event()
+    failure_committed = Event()
+
+    def coordinate_verification(candidate: str, _password_hash: str) -> bool:
+        if candidate == password:
+            success_verifying.set()
+            assert failure_committed.wait(timeout=5)
+            return True
+        return False
+
+    def submit_failure():
+        response = client.post(
+            "/api/auth/login",
+            json={"shop_id": user.shop_id, "email": user.email, "password": "wrong"},
+        )
+        failure_committed.set()
+        return response
+
+    monkeypatch.setattr("open_garage_erp.app.verify_password", coordinate_verification)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        success_future = executor.submit(
+            client.post,
+            "/api/auth/login",
+            json={"shop_id": user.shop_id, "email": user.email, "password": password},
+        )
+        assert success_verifying.wait(timeout=5)
+        failure_response = executor.submit(submit_failure).result(timeout=5)
+        success_response = success_future.result(timeout=5)
+
+    assert failure_response.status_code == 401
+    assert success_response.status_code == 429
+    with session_factory() as session:
+        attempt = session.get(LoginAttempt, (user.shop_id, user.email))
+        assert attempt is not None
+        assert attempt.locked_until is not None
+        assert attempt.locked_until > utc_now()
+        assert session.query(SessionToken).count() == 0

@@ -1,11 +1,14 @@
+from contextlib import suppress
 from datetime import timedelta
-from typing import Annotated, Any
+from math import ceil
+from typing import Annotated, Any, NoReturn
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response
-from sqlalchemy import func, select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy import case, delete, func, select, update
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -14,6 +17,7 @@ from open_garage_erp.config import Settings
 from open_garage_erp.database import build_session_factory, session_dependency
 from open_garage_erp.models import (
     Customer,
+    LoginAttempt,
     RepairOrder,
     SessionToken,
     User,
@@ -48,6 +52,10 @@ VALID_STATUS_TRANSITIONS: dict[str, set[str]] = {
     "completed": set(),
     "cancelled": set(),
 }
+
+MAX_LOGIN_FAILURES = 5
+LOGIN_LOCKOUT = timedelta(minutes=15)
+MAX_LOGIN_ATTEMPT_ROWS = 10_000
 
 
 class RequestBodyLimitMiddleware:
@@ -174,6 +182,17 @@ def error_body(code: str, message: str, details: Any = None) -> dict[str, Any]:
     return {"error": {"code": code, "message": message, "details": details}}
 
 
+def fail_authentication_closed(session: Session) -> NoReturn:
+    with suppress(SQLAlchemyError):
+        session.rollback()
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=error_body(
+            "authentication_unavailable", "Authentication service is temporarily unavailable"
+        ),
+    )
+
+
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     settings.ensure_local_database_directory()
@@ -227,29 +246,122 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/auth/login", response_model=LoginResponse, tags=["authentication"])
     def login(payload: LoginRequest, session: SessionDep):
-        user = session.scalar(
-            select(User).where(User.shop_id == payload.shop_id, User.email == payload.email)
-        )
+        try:
+            user = session.scalar(
+                select(User).where(User.shop_id == payload.shop_id, User.email == payload.email)
+            )
+            attempt = session.get(LoginAttempt, (payload.shop_id, payload.email))
+        except SQLAlchemyError:
+            fail_authentication_closed(session)
+        now = utc_now()
         password_hash = (
             user.password_hash if user is not None and user.is_active else DUMMY_PASSWORD_HASH
         )
+        if (
+            attempt is not None
+            and attempt.locked_until is not None
+            and attempt.locked_until > now
+        ):
+            retry_after = ceil((attempt.locked_until - now).total_seconds())
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=error_body("login_rate_limited", "Too many failed login attempts"),
+                headers={"Retry-After": str(retry_after)},
+            )
         password_matches = verify_password(payload.password, password_hash)
         if user is None or not user.is_active or not password_matches:
+            insert_attempt = sqlite_insert(LoginAttempt).values(
+                shop_id=payload.shop_id,
+                email=payload.email,
+                failed_attempts=1,
+                locked_until=None,
+                created_at=now,
+                updated_at=now,
+            )
+            next_failed_attempts = case(
+                (
+                    LoginAttempt.locked_until.is_not(None)
+                    & (LoginAttempt.locked_until <= now),
+                    1,
+                ),
+                else_=LoginAttempt.failed_attempts + 1,
+            )
+            next_locked_until = case(
+                (LoginAttempt.locked_until > now, LoginAttempt.locked_until),
+                (
+                    LoginAttempt.locked_until.is_not(None)
+                    & (LoginAttempt.locked_until <= now),
+                    None,
+                ),
+                (
+                    LoginAttempt.failed_attempts + 1 >= MAX_LOGIN_FAILURES,
+                    now + LOGIN_LOCKOUT,
+                ),
+                else_=None,
+            )
+            try:
+                session.execute(
+                    insert_attempt.on_conflict_do_update(
+                        index_elements=[LoginAttempt.shop_id, LoginAttempt.email],
+                        set_={
+                            "failed_attempts": next_failed_attempts,
+                            "locked_until": next_locked_until,
+                            "updated_at": now,
+                        },
+                    )
+                )
+                attempt_count = session.scalar(select(func.count()).select_from(LoginAttempt))
+                if attempt_count > MAX_LOGIN_ATTEMPT_ROWS:
+                    fail_authentication_closed(session)
+                session.commit()
+            except SQLAlchemyError:
+                fail_authentication_closed(session)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=error_body("invalid_credentials", "Invalid shop, email, or password"),
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        access_token = generate_session_token()
-        expires_at = utc_now() + timedelta(hours=12)
-        session.add(
-            SessionToken(
-                user_id=user.id,
-                token_hash=hash_session_token(access_token),
-                expires_at=expires_at,
+        try:
+            write_now = utc_now()
+            cleared_attempt = session.execute(
+                delete(LoginAttempt)
+                .where(
+                    LoginAttempt.shop_id == payload.shop_id,
+                    LoginAttempt.email == payload.email,
+                    (LoginAttempt.locked_until.is_(None))
+                    | (LoginAttempt.locked_until <= write_now),
+                )
+                .execution_options(synchronize_session=False)
             )
-        )
-        session.commit()
+            if cleared_attempt.rowcount == 0:
+                active_lock = session.scalar(
+                    select(LoginAttempt.locked_until).where(
+                        LoginAttempt.shop_id == payload.shop_id,
+                        LoginAttempt.email == payload.email,
+                        LoginAttempt.locked_until > write_now,
+                    )
+                )
+                if active_lock is not None:
+                    retry_after = ceil((active_lock - write_now).total_seconds())
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail=error_body(
+                            "login_rate_limited", "Too many failed login attempts"
+                        ),
+                        headers={"Retry-After": str(retry_after)},
+                    )
+            access_token = generate_session_token()
+            expires_at = utc_now() + timedelta(hours=12)
+            session.add(
+                SessionToken(
+                    user_id=user.id,
+                    token_hash=hash_session_token(access_token),
+                    expires_at=expires_at,
+                )
+            )
+            session.commit()
+        except SQLAlchemyError:
+            fail_authentication_closed(session)
         return LoginResponse(access_token=access_token, expires_at=expires_at)
 
     @app.get("/api/auth/owner-check", tags=["authentication"])

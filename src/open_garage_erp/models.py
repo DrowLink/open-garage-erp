@@ -66,6 +66,15 @@ class User(TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
+class LoginAttempt(TimestampMixin, Base):
+    __tablename__ = "login_attempts"
+
+    shop_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(320), primary_key=True)
+    failed_attempts: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
 class SessionToken(TimestampMixin, Base):
     __tablename__ = "session_tokens"
 
