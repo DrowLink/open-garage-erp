@@ -60,7 +60,7 @@ curl -sS -X PATCH http://127.0.0.1:8000/api/repair-orders/1/status \
 curl -sS http://127.0.0.1:8000/api/dashboard/summary
 ```
 
-Resource APIs support create, ordered list, and get-by-ID. Repair orders also support status updates. Errors share this shape:
+Resource APIs support create, ordered list, and get-by-ID. Repair orders also support status updates. API write payloads reject unknown fields instead of silently ignoring misspelled or unsupported input. Errors share this shape:
 
 ```json
 {"error":{"code":"not_found","message":"Customer 999 not found","details":null}}

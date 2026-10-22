@@ -6,7 +6,11 @@ from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_serializer
 MAX_SQLITE_INTEGER = 2**63 - 1
 
 
-class CustomerCreate(BaseModel):
+class WritePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class CustomerCreate(WritePayload):
     name: str = Field(min_length=1, max_length=200)
     email: str | None = Field(default=None, max_length=320)
     phone: str | None = Field(default=None, max_length=50)
@@ -24,7 +28,7 @@ class TimestampedResponse(BaseModel):
         return aware.isoformat().replace("+00:00", "Z")
 
 
-class LoginRequest(BaseModel):
+class LoginRequest(WritePayload):
     shop_id: int = Field(gt=0, le=MAX_SQLITE_INTEGER)
     email: str = Field(min_length=1, max_length=320)
     password: str = Field(min_length=1, max_length=1024)
@@ -48,7 +52,7 @@ class CustomerResponse(TimestampedResponse):
     phone: str | None
 
 
-class VehicleCreate(BaseModel):
+class VehicleCreate(WritePayload):
     customer_id: int = Field(gt=0, le=MAX_SQLITE_INTEGER)
     vin: str | None = Field(default=None, min_length=17, max_length=17)
     year: int = Field(ge=1886, le=2200)
@@ -75,13 +79,13 @@ class RepairOrderStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
-class RepairOrderCreate(BaseModel):
+class RepairOrderCreate(WritePayload):
     vehicle_id: int = Field(gt=0, le=MAX_SQLITE_INTEGER)
     description: str = Field(min_length=1, max_length=2000)
     estimate_cents: StrictInt = Field(ge=0, le=MAX_SQLITE_INTEGER)
 
 
-class RepairOrderStatusUpdate(BaseModel):
+class RepairOrderStatusUpdate(WritePayload):
     status: RepairOrderStatus
 
 
