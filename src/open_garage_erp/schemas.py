@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, field_serializer, model_validator
 
 MAX_SQLITE_INTEGER = 2**63 - 1
 
@@ -14,6 +14,22 @@ class CustomerCreate(WritePayload):
     name: str = Field(min_length=1, max_length=200)
     email: str | None = Field(default=None, max_length=320)
     phone: str | None = Field(default=None, max_length=50)
+
+
+class CustomerUpdate(WritePayload):
+    name: str | None = Field(default=None, min_length=1, max_length=200)
+    email: str | None = Field(default=None, max_length=320)
+    phone: str | None = Field(default=None, max_length=50)
+    expected_updated_at: datetime
+
+    @model_validator(mode="after")
+    def require_change(self) -> "CustomerUpdate":
+        changed_fields = self.model_fields_set - {"expected_updated_at"}
+        if not changed_fields:
+            raise ValueError("At least one customer field must be supplied")
+        if "name" in changed_fields and self.name is None:
+            raise ValueError("Customer name cannot be null")
+        return self
 
 
 class TimestampedResponse(BaseModel):

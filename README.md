@@ -43,6 +43,11 @@ curl -sS -X POST http://127.0.0.1:8000/api/customers \
   -H 'content-type: application/json' \
   -d '{"name":"Ada Lovelace","email":"ada@example.com"}'
 
+# Optimistic customer update; use the updated_at value returned by the latest read
+curl -sS -X PATCH http://127.0.0.1:8000/api/customers/1 \
+  -H 'content-type: application/json' \
+  -d '{"phone":"+1 555 0100","expected_updated_at":"2026-01-01T12:00:00Z"}'
+
 # Vehicle (replace customer_id as needed)
 curl -sS -X POST http://127.0.0.1:8000/api/vehicles \
   -H 'content-type: application/json' \
@@ -60,7 +65,7 @@ curl -sS -X PATCH http://127.0.0.1:8000/api/repair-orders/1/status \
 curl -sS http://127.0.0.1:8000/api/dashboard/summary
 ```
 
-Resource APIs support create, ordered list, and get-by-ID. Repair orders also support status updates. API write payloads reject unknown fields instead of silently ignoring misspelled or unsupported input. Errors share this shape:
+Resource APIs support create, ordered list, and get-by-ID. Customers support partial updates guarded by the `expected_updated_at` value from the latest read; stale writes receive `409`. Repair orders also support status updates. API write payloads reject unknown fields instead of silently ignoring misspelled or unsupported input. Errors share this shape:
 
 ```json
 {"error":{"code":"not_found","message":"Customer 999 not found","details":null}}

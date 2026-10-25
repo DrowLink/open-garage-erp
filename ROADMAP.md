@@ -32,7 +32,7 @@ Each checkbox is scoped for one autonomous daily run. Work top-to-bottom within 
 - [x] Create, list, and get customers with validated input.
 - [x] Create, list, and get customer-linked vehicles.
 - [x] Reject vehicle creation for an unknown customer.
-- [ ] Add customer update with optimistic timestamp checks.
+- [x] Add customer update with optimistic timestamp checks.
 - [ ] Add customer archive without destructive deletion (depends: customer update).
 - [ ] Add customer list pagination and stable cursors.
 - [ ] Add customer search by normalized name, email, or phone.

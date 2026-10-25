@@ -1,5 +1,5 @@
 from contextlib import suppress
-from datetime import timedelta
+from datetime import UTC, timedelta
 from math import ceil
 from typing import Annotated, Any, NoReturn
 
@@ -29,6 +29,7 @@ from open_garage_erp.schemas import (
     MAX_SQLITE_INTEGER,
     CustomerCreate,
     CustomerResponse,
+    CustomerUpdate,
     LoginRequest,
     LoginResponse,
     RepairOrderCreate,
@@ -447,6 +448,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 detail=error_body("not_found", f"Customer {customer_id} not found"),
             )
         return customer
+
+    @app.patch(
+        "/api/customers/{customer_id}", response_model=CustomerResponse, tags=["customers"]
+    )
+    def update_customer(customer_id: EntityId, payload: CustomerUpdate, session: SessionDep):
+        expected_updated_at = payload.expected_updated_at
+        if expected_updated_at.tzinfo is not None:
+            expected_updated_at = expected_updated_at.astimezone(UTC).replace(tzinfo=None)
+        changes = payload.model_dump(exclude={"expected_updated_at"}, exclude_unset=True)
+        changes["updated_at"] = utc_now()
+        customer = session.scalar(
+            update(Customer)
+            .where(Customer.id == customer_id, Customer.updated_at == expected_updated_at)
+            .values(**changes)
+            .returning(Customer)
+        )
+        if customer is not None:
+            session.commit()
+            return customer
+
+        current = session.get(Customer, customer_id)
+        if current is None:
+            raise HTTPException(
+                status_code=404,
+                detail=error_body("not_found", f"Customer {customer_id} not found"),
+            )
+        current_timestamp = CustomerResponse.model_validate(current).model_dump(mode="json")[
+            "updated_at"
+        ]
+        raise HTTPException(
+            status_code=409,
+            detail=error_body(
+                "stale_update",
+                "Customer was modified after the supplied timestamp",
+                {"current_updated_at": current_timestamp},
+            ),
+        )
 
     @app.post(
         "/api/vehicles",
