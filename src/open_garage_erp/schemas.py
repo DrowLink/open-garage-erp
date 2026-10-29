@@ -32,6 +32,10 @@ class CustomerUpdate(WritePayload):
         return self
 
 
+class CustomerArchive(WritePayload):
+    expected_updated_at: datetime
+
+
 class TimestampedResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -66,6 +70,14 @@ class CustomerResponse(TimestampedResponse):
     name: str
     email: str | None
     phone: str | None
+    archived_at: datetime | None
+
+    @field_serializer("archived_at")
+    def serialize_archived_at(self, value: datetime | None) -> str | None:
+        if value is None:
+            return None
+        aware = value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+        return aware.isoformat().replace("+00:00", "Z")
 
 
 class VehicleCreate(WritePayload):

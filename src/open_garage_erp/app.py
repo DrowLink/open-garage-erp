@@ -27,6 +27,7 @@ from open_garage_erp.models import (
 )
 from open_garage_erp.schemas import (
     MAX_SQLITE_INTEGER,
+    CustomerArchive,
     CustomerCreate,
     CustomerResponse,
     CustomerUpdate,
@@ -437,7 +438,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/customers", response_model=list[CustomerResponse], tags=["customers"])
     def list_customers(session: SessionDep):
-        return session.scalars(select(Customer).order_by(Customer.id)).all()
+        return session.scalars(
+            select(Customer).where(Customer.archived_at.is_(None)).order_by(Customer.id)
+        ).all()
 
     @app.get("/api/customers/{customer_id}", response_model=CustomerResponse, tags=["customers"])
     def get_customer(customer_id: EntityId, session: SessionDep):
@@ -485,6 +488,43 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 {"current_updated_at": current_timestamp},
             ),
         )
+
+    @app.post(
+        "/api/customers/{customer_id}/archive",
+        response_model=CustomerResponse,
+        tags=["customers"],
+    )
+    def archive_customer(customer_id: EntityId, payload: CustomerArchive, session: SessionDep):
+        expected_updated_at = payload.expected_updated_at
+        if expected_updated_at.tzinfo is not None:
+            expected_updated_at = expected_updated_at.astimezone(UTC).replace(tzinfo=None)
+        archived_at = utc_now()
+        customer = session.scalar(
+            update(Customer)
+            .where(Customer.id == customer_id, Customer.updated_at == expected_updated_at)
+            .values(archived_at=archived_at, updated_at=archived_at)
+            .returning(Customer)
+        )
+        if customer is None:
+            current = session.get(Customer, customer_id)
+            if current is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail=error_body("not_found", f"Customer {customer_id} not found"),
+                )
+            current_timestamp = CustomerResponse.model_validate(current).model_dump(mode="json")[
+                "updated_at"
+            ]
+            raise HTTPException(
+                status_code=409,
+                detail=error_body(
+                    "stale_update",
+                    "Customer was modified after the supplied timestamp",
+                    {"current_updated_at": current_timestamp},
+                ),
+            )
+        session.commit()
+        return customer
 
     @app.post(
         "/api/vehicles",
