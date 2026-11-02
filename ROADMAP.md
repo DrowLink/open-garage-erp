@@ -34,7 +34,7 @@ Each checkbox is scoped for one autonomous daily run. Work top-to-bottom within 
 - [x] Reject vehicle creation for an unknown customer.
 - [x] Add customer update with optimistic timestamp checks.
 - [x] Add customer archive without destructive deletion (depends: customer update).
-- [ ] Add customer list pagination and stable cursors.
+- [x] Add customer list pagination and stable cursors.
 - [ ] Add customer search by normalized name, email, or phone.
 - [ ] Add duplicate-customer warning rules.
 - [ ] Normalize and validate VIN check digits.

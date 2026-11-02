@@ -1,9 +1,11 @@
+from base64 import b64decode, urlsafe_b64encode
+from binascii import Error as Base64Error
 from contextlib import suppress
 from datetime import UTC, timedelta
 from math import ceil
 from typing import Annotated, Any, NoReturn
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Path, Request, status
+from fastapi import Depends, FastAPI, Header, HTTPException, Path, Query, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from sqlalchemy import case, delete, func, select, update
@@ -29,6 +31,7 @@ from open_garage_erp.schemas import (
     MAX_SQLITE_INTEGER,
     CustomerArchive,
     CustomerCreate,
+    CustomerPage,
     CustomerResponse,
     CustomerUpdate,
     LoginRequest,
@@ -202,6 +205,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     get_session = session_dependency(session_factory)
     SessionDep = Annotated[Session, Depends(get_session)]
     EntityId = Annotated[int, Path(gt=0, le=MAX_SQLITE_INTEGER)]
+    PageCursor = Annotated[str | None, Query(max_length=128)]
     app = FastAPI(title=settings.app_name, debug=settings.debug)
     app.add_middleware(
         RequestBodyLimitMiddleware,
@@ -436,11 +440,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session.refresh(customer)
         return customer
 
-    @app.get("/api/customers", response_model=list[CustomerResponse], tags=["customers"])
-    def list_customers(session: SessionDep):
-        return session.scalars(
-            select(Customer).where(Customer.archived_at.is_(None)).order_by(Customer.id)
+    @app.get(
+        "/api/customers",
+        response_model=list[CustomerResponse] | CustomerPage,
+        tags=["customers"],
+    )
+    def list_customers(
+        session: SessionDep,
+        limit: Annotated[int | None, Query(ge=1, le=100)] = None,
+        cursor: PageCursor = None,
+    ):
+        if limit is None and cursor is None:
+            return session.scalars(
+                select(Customer).where(Customer.archived_at.is_(None)).order_by(Customer.id)
+            ).all()
+
+        page_size = limit if limit is not None else 50
+        after_id = 0
+        if cursor is not None:
+            try:
+                decoded_cursor = b64decode(cursor, altchars=b"-_", validate=True).decode()
+                prefix, separator, encoded_id = decoded_cursor.partition(":")
+                if (
+                    prefix != "customer"
+                    or separator != ":"
+                    or not encoded_id.isascii()
+                    or not encoded_id.isdecimal()
+                ):
+                    raise ValueError
+                after_id = int(encoded_id)
+                if not 0 < after_id <= MAX_SQLITE_INTEGER:
+                    raise ValueError
+            except (Base64Error, UnicodeDecodeError, ValueError):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                    detail=error_body("invalid_cursor", "Customer cursor is invalid"),
+                ) from None
+        customers = session.scalars(
+            select(Customer)
+            .where(Customer.archived_at.is_(None), Customer.id > after_id)
+            .order_by(Customer.id)
+            .limit(page_size + 1)
         ).all()
+        has_more = len(customers) > page_size
+        items = customers[:page_size]
+        next_cursor = None
+        if has_more:
+            next_cursor = urlsafe_b64encode(f"customer:{items[-1].id}".encode()).decode()
+        return CustomerPage(items=items, next_cursor=next_cursor)
 
     @app.get("/api/customers/{customer_id}", response_model=CustomerResponse, tags=["customers"])
     def get_customer(customer_id: EntityId, session: SessionDep):

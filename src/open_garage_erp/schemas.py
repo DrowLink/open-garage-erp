@@ -80,6 +80,11 @@ class CustomerResponse(TimestampedResponse):
         return aware.isoformat().replace("+00:00", "Z")
 
 
+class CustomerPage(BaseModel):
+    items: list[CustomerResponse]
+    next_cursor: str | None
+
+
 class VehicleCreate(WritePayload):
     customer_id: int = Field(gt=0, le=MAX_SQLITE_INTEGER)
     vin: str | None = Field(default=None, min_length=17, max_length=17)

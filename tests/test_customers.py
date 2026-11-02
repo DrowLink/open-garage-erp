@@ -1,3 +1,6 @@
+from base64 import urlsafe_b64encode
+
+
 def test_create_list_and_get_customer(client):
     created = client.post(
         "/api/customers",
@@ -118,6 +121,73 @@ def test_customer_list_excludes_archived_customers(client):
 
     assert response.status_code == 200
     assert response.json() == [active_customer]
+
+
+def test_customer_list_returns_a_limited_page_with_a_cursor(client):
+    customers = [
+        client.post("/api/customers", json={"name": f"Customer {number}"}).json()
+        for number in range(1, 4)
+    ]
+
+    response = client.get("/api/customers", params={"limit": 2})
+
+    assert response.status_code == 200
+    page = response.json()
+    assert page["items"] == customers[:2]
+    assert isinstance(page["next_cursor"], str)
+    assert page["next_cursor"]
+
+
+def test_customer_list_cursor_returns_the_next_page(client):
+    customers = [
+        client.post("/api/customers", json={"name": f"Customer {number}"}).json()
+        for number in range(1, 4)
+    ]
+    first_page = client.get("/api/customers", params={"limit": 2}).json()
+
+    response = client.get(
+        "/api/customers",
+        params={"limit": 2, "cursor": first_page["next_cursor"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"items": customers[2:], "next_cursor": None}
+
+
+def test_customer_list_cursor_without_limit_uses_default_page_size(client):
+    customers = [
+        client.post("/api/customers", json={"name": f"Customer {number}"}).json()
+        for number in range(1, 53)
+    ]
+    cursor = client.get("/api/customers", params={"limit": 1}).json()["next_cursor"]
+
+    response = client.get("/api/customers", params={"cursor": cursor})
+
+    assert response.status_code == 200
+    assert response.json()["items"] == customers[1:51]
+    assert response.json()["next_cursor"]
+
+
+def test_customer_list_rejects_an_invalid_cursor(client):
+    response = client.get("/api/customers", params={"cursor": "not-a-cursor"})
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "error": {
+            "code": "invalid_cursor",
+            "message": "Customer cursor is invalid",
+            "details": None,
+        }
+    }
+
+
+def test_customer_list_rejects_unicode_decimal_digits_in_cursor(client):
+    cursor = urlsafe_b64encode("customer:١".encode()).decode()
+
+    response = client.get("/api/customers", params={"cursor": cursor})
+
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "invalid_cursor"
 
 
 def test_archive_unknown_customer_returns_not_found(client):

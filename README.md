@@ -43,6 +43,9 @@ curl -sS -X POST http://127.0.0.1:8000/api/customers \
   -H 'content-type: application/json' \
   -d '{"name":"Ada Lovelace","email":"ada@example.com"}'
 
+# Paginated customers; pass next_cursor back as cursor to continue
+curl -sS 'http://127.0.0.1:8000/api/customers?limit=25'
+
 # Optimistic customer update; use the updated_at value returned by the latest read
 curl -sS -X PATCH http://127.0.0.1:8000/api/customers/1 \
   -H 'content-type: application/json' \
@@ -65,7 +68,7 @@ curl -sS -X PATCH http://127.0.0.1:8000/api/repair-orders/1/status \
 curl -sS http://127.0.0.1:8000/api/dashboard/summary
 ```
 
-Resource APIs support create, ordered list, and get-by-ID. Customers support partial updates guarded by the `expected_updated_at` value from the latest read; stale writes receive `409`. Repair orders also support status updates. API write payloads reject unknown fields instead of silently ignoring misspelled or unsupported input. Errors share this shape:
+Resource APIs support create, ordered list, and get-by-ID. `GET /api/customers` without `limit` or `cursor` preserves the legacy JSON array response. To opt in to stable ID-based cursor pagination, supply `limit` from 1 through 100; paginated responses have the shape `{"items": [...], "next_cursor": "..."}`. Pass the opaque `next_cursor` value back as `cursor` to continue; a cursor without `limit` uses a page size of 50. Customers support partial updates guarded by the `expected_updated_at` value from the latest read; stale writes receive `409`. Repair orders also support status updates. API write payloads reject unknown fields instead of silently ignoring misspelled or unsupported input. Errors share this shape:
 
 ```json
 {"error":{"code":"not_found","message":"Customer 999 not found","details":null}}
